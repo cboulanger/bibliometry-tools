@@ -331,6 +331,8 @@ class SemanticScholarToNeo4J:
         # all dois have been processed, delete file
         os.remove(cache_path)
 
+class ApiError(RuntimeError):
+    pass
 
 class OpenAlexToNeo4J:
     neo4jdb: GraphDb = None
@@ -363,7 +365,7 @@ class OpenAlexToNeo4J:
 
     def raise_api_error(self, url, response: requests.Response):
         if response.status_code == 404:
-            raise RuntimeError(url + " returned 404 page not found")
+            raise ApiError(url + " returned 404 page not found")
         try:
             json_response = response.json()
             error = json_response['error']
@@ -371,7 +373,7 @@ class OpenAlexToNeo4J:
         except:
             error = response.text
             message = None
-        raise RuntimeError(
+        raise ApiError(
             f"Call to {url} failed.\nError: {error}" + (f"\nMessage: {message}" if bool(message) else ""))
 
     def get_short_id(self, entity_id: str):
@@ -476,19 +478,23 @@ class OpenAlexToNeo4J:
                 counter += 1
         return counter
 
-    def import_author(self, data, retrieve_full_data=False) -> int:
+    def import_author(self, author_data, retrieve_full_data=False) -> int:
         if retrieve_full_data:
-            data = self.get_full_entity_data(data['id'])
-        if 'display_name_alternatives' in data:
-            data['display_name_alternatives'] = "\n".join(data['display_name_alternatives'])
-        if 'last_known_institution' in data and bool(data['last_known_institution']):
-            self.import_institution(data['last_known_institution'], retrieve_full_data=True)
-            self.create_relationship(
-                "Author", data['id'],
-                "Institution", data['last_known_institution']['id'],
-                "MEMBER_OF")
-        node_id = self.create_node("Author", data)
-        self.log(f"Imported Author {data['display_name']}")
+            author_data = self.get_full_entity_data(author_data['id'])
+        if 'display_name_alternatives' in author_data:
+            author_data['display_name_alternatives'] = "\n".join(author_data['display_name_alternatives'])
+        if 'last_known_institution' in author_data and bool(author_data['last_known_institution']):
+            try:
+                institution_data = author_data['last_known_institution']
+                self.import_institution(institution_data, retrieve_full_data=True)
+                self.create_relationship(
+                    "Author", author_data['id'],
+                    "Institution", institution_data['id'],
+                    "MEMBER_OF")
+            except ApiError as err:
+                print(f"Could not import Institution '{institution_data['display_name']}': {err}")
+        node_id = self.create_node("Author", author_data)
+        self.log(f"Imported Author {author_data['display_name']}")
         return node_id
 
     def import_venue(self, data_: dict, retrieve_full_data=False) -> int:
@@ -506,64 +512,76 @@ class OpenAlexToNeo4J:
         self.log(f"Imported Venue {venue_name}")
         return node_id
 
-    def import_institution(self, data, retrieve_full_data=False) -> int:
+    def import_institution(self, inst_data: dict, retrieve_full_data=False) -> int:
         if retrieve_full_data:
-            data = self.get_full_entity_data(data['id'])
-        if "display_name_alternatives" in data and len(data['display_name_alternatives']) > 0:
-            data['display_name_alternatives'] = "\n".join(data['display_name_alternatives'])
-        if "ids" in data:
-            for key, value in data['ids'].items():
-                data[key] = value
-        if "geo" in data:
-            for key, value in data['geo'].items():
-                data[key] = value
-        if retrieve_full_data and 'associated_institutions' in data:
-            for institution_data in data['associated_institutions']:
-                # create links to institutions that already exist
-                if institution_data['id'] != data['id'] and self.node_exists(institution_data['id']):
+            inst_data = self.get_full_entity_data(inst_data['id'])
+        if "display_name_alternatives" in inst_data and len(inst_data['display_name_alternatives']) > 0:
+            inst_data['display_name_alternatives'] = "\n".join(inst_data['display_name_alternatives'])
+        if "ids" in inst_data:
+            for key, value in inst_data['ids'].items():
+                inst_data[key] = value
+        if "geo" in inst_data:
+            for key, value in inst_data['geo'].items():
+                inst_data[key] = value
+        if retrieve_full_data and 'associated_institutions' in inst_data:
+            for ass_inst_data in inst_data['associated_institutions']:
+                # create links only to institutions that already exist
+                if ass_inst_data['id'] != inst_data['id'] and self.node_exists(ass_inst_data['id']):
                     self.create_relationship(
-                        "Institution", data['id'],
-                        "Institution", institution_data['id'],
+                        "Institution", inst_data['id'],
+                        "Institution", ass_inst_data['id'],
                         "AFFILIATED_WITH")
-        node_id = self.create_node("Institution", data)
-        self.log(f"Imported Institution {data['display_name']}")
+        node_id = self.create_node("Institution", inst_data)
+        self.log(f"Imported Institution {inst_data['display_name']}")
         return node_id
 
-    def import_work(self, data, retrieve_full_data=False, import_cited_works=True) -> int:
+    def import_work(self, work_data, retrieve_full_data=False, import_cited_works=True) -> int:
         if retrieve_full_data:
-            data = self.get_full_entity_data(data['id'])
-        if 'host_venue' in data \
-                and type(data['host_venue']) is dict \
-                and self.count_non_empty_properties(data['host_venue']) >= 1:
-            venue_id = data['host_venue']['id']
-            venu_node_id = self.import_venue(
-                data['host_venue'],
-                retrieve_full_data = bool(venue_id))
-            self.create_relationship(
-                "Work", data['id'],
-                "Venue", venue_id or venu_node_id,
-                "PUBLISHED_IN")
-        for authorship in data['authorships']:
-            author_id = authorship['author']['id']
-            author_node_id = self.import_author(authorship['author'], retrieve_full_data=True)
-            self.create_relationship(
-                "Author", author_id or author_node_id,
-                "Work", data['id'],
-                "CREATOR_OF")
-        if 'biblio' in data:
-            for key, value in data['biblio'].items():
-                data[key] = value
-        node_id = self.create_node("Work", data)
-        if import_cited_works and 'referenced_works' in data:
-            num_cited_works = len(data['referenced_works'])
-            for idx, cited_oa_id in enumerate(data['referenced_works']):
-                self.log(f">>> Importing {idx+1} of {num_cited_works} cited works:")
-                self.import_work({"id": cited_oa_id}, retrieve_full_data=True, import_cited_works=False)
+            work_data = self.get_full_entity_data(work_data['id'])
+        if 'host_venue' in work_data \
+                and type(work_data['host_venue']) is dict \
+                and self.count_non_empty_properties(work_data['host_venue']) >= 1:
+            venue_id = work_data['host_venue']['id']
+            try:
+                venu_node_id = self.import_venue(
+                    work_data['host_venue'],
+                    retrieve_full_data = bool(venue_id))
                 self.create_relationship(
-                    "Work", data['id'],
-                    "Work", cited_oa_id,
-                    "CITES")
-        self.log(f"Imported Work {data['title']}")
+                    "Work", work_data['id'],
+                    "Venue", venue_id or venu_node_id,
+                    "PUBLISHED_IN")
+            except ApiError as err:
+                print(f"Could not import Work '{work_data['title']}': {err}")
+        for authorship in work_data['authorships']:
+            author_id = authorship['author']['id']
+            try:
+                author_node_id = self.import_author(authorship['author'], retrieve_full_data=True)
+                self.create_relationship(
+                    "Author", author_id or author_node_id,
+                    "Work", work_data['id'],
+                    "CREATOR_OF")
+            except ApiError as err:
+                print(f"Could not import Author {authorship['author']['display_name']}:{err}")
+        if 'biblio' in work_data:
+            for key, value in work_data['biblio'].items():
+                work_data[key] = value
+        node_id = self.create_node("Work", work_data)
+        if import_cited_works and 'referenced_works' in work_data:
+            cited_works_oa_ids = work_data['referenced_works']
+            num_cited_works = len(cited_works_oa_ids)
+            for idx, cited_work_oa_id in enumerate(cited_works_oa_ids):
+                self.log(f">>> Importing {idx+1} of {num_cited_works} cited works:")
+                try:
+                    node_id = self.import_work({"id": cited_work_oa_id},
+                                               retrieve_full_data=True,
+                                               import_cited_works=False)
+                    self.create_relationship(
+                        "Work", work_data['id'],
+                        "Work", cited_work_oa_id or node_id,
+                        "CITES")
+                except ApiError as err:
+                    print(f"Could not import Cited Work '{cited_work_oa_id}':{err}")
+        self.log(f"Imported Work {work_data['title']}")
         return node_id
 
 
