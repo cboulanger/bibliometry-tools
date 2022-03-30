@@ -8,7 +8,6 @@ import time
 import pickle
 from email.utils import parseaddr
 
-
 class GraphDb:
 
     def __init__(self, uri, user, password, database):
@@ -23,8 +22,8 @@ class GraphDb:
             return session.write_transaction(self._merge_node_transaction, node_type, node_data)
 
     def merge_relationship(self,
-                           source_node_selector: Union[str, int],
-                           target_node_selector: Union[str, int],
+                           source_node_selector: Union[str, int, tuple],
+                           target_node_selector: Union[str, int, tuple],
                            relationship: str):
         with self.driver.session(database=self.database) as session:
             return session.write_transaction(self._merge_relationship_transaction, source_node_selector,
@@ -52,17 +51,28 @@ class GraphDb:
         set_expr = ",\n    ".join(set_statements)
         query = f"MERGE (a:{node_type} {{id:'{node_data['id']}'}}) \nSET {set_expr} \nRETURN id(a)"
         #print(query)
-        result = tx.run(query).single()
+        try:
+            result = tx.run(query).single()
+        except Exception as err:
+            raise RuntimeError(f"Query failed:\nQuery: {query}\nError: {err}")
         node_id = int(result[0])
         return node_id
 
     @staticmethod
     def _merge_relationship_transaction(tx,
-                                        source_node_selector: Union[str, int],
-                                        target_node_selector: Union[str, int],
+                                        source_node_selector: Union[str, int, tuple],
+                                        target_node_selector: Union[str, int, tuple],
                                         relationship: str):
         if not source_node_selector or not target_node_selector or not relationship:
             raise RuntimeError("Invalid arguments")
+        if type(source_node_selector) is tuple:
+            node_label, id_property, id_value = source_node_selector
+            id_value = json.dumps(id_value)
+            source_node_selector = f"{node_label} {{{id_property}:{id_value}}}"
+        if type(target_node_selector) is tuple:
+            node_label, id_property, id_value = target_node_selector
+            id_value = json.dumps(id_value)
+            target_node_selector = f"{node_label} {{{id_property}:{id_value}}}"
         if type(source_node_selector) is str and type(target_node_selector) is str:
             query = f"MATCH (a:{source_node_selector}), (b:{target_node_selector})"
         elif type(source_node_selector) is str and type(target_node_selector) is int:
@@ -75,7 +85,10 @@ class GraphDb:
             raise ValueError("Invalid values for source and/or target selector")
         query += f" MERGE (a)-[r:{relationship}]->(b) RETURN id(r)"
         #print(query)
-        result = tx.run(query).single()
+        try:
+            result = tx.run(query).single()
+        except Exception as err:
+            raise RuntimeError(f"Query failed:\nQuery: {query}\nError: {err}")
         return result[0] if result is not None else None
     @staticmethod
     def _get_node_tx(tx, identifier):
@@ -133,18 +146,18 @@ class SemanticScholar:
             fields.append("papers")
         return ",".join(fields)
 
-    def _make_url(self, type, item_id=None, query=None, papers=False, references=False, citations=False):
+    def _make_url(self, item_type, item_id=None, query=None, papers=False, references=False, citations=False):
         url = ""
-        if type == "paper":
+        if item_type == "paper":
             fields = self._get_paper_fields(references=references, citations=citations)
-        elif type == "author":
+        elif item_type == "author":
             fields = self._get_author_fields(papers=papers)
         else:
             raise RuntimeError("Missing type")
         if query is not None:
-            url = f"{self.baseUri}/{type}/search?query={quote(query)}&fields={fields}"
+            url = f"{self.baseUri}/{item_type}/search?query={quote(query)}&fields={fields}"
         elif item_id is not None:
-            url = f"{self.baseUri}/{type}/{item_id}?fields={fields}"
+            url = f"{self.baseUri}/{item_type}/{item_id}?fields={fields}"
         else:
             raise RuntimeError("Invalid arguments")
         return url
@@ -182,11 +195,11 @@ class SemanticScholar:
         return self._call_api_with_delay(url)
 
     def paper(self, query=None, item_id=None, citations=False, references=False) -> Union[dict, list]:
-        url = self._make_url(type="paper", item_id=item_id, query=query, citations=citations, references=references)
+        url = self._make_url(item_type="paper", item_id=item_id, query=query, citations=citations, references=references)
         return self._retrieve_result(url)
 
     def author(self, query=None, item_id=None, papers=False) -> Union[dict, list]:
-        url = self._make_url(type="author", item_id=item_id, query=query, papers=papers)
+        url = self._make_url(item_type="author", item_id=item_id, query=query, papers=papers)
         return self._retrieve_result(url)
 
 
@@ -328,7 +341,7 @@ class OpenAlexToNeo4J:
     node_labels = ['Work', 'Author', 'Institution', 'Venue']
 
     def __init__(self, email=None, verbose=False):
-        if email is not None:
+        if bool(email):
             self.email = email
         self.verbose = verbose
         # neo4j database API object
@@ -359,7 +372,7 @@ class OpenAlexToNeo4J:
             error = response.text
             message = None
         raise RuntimeError(
-            f"Call to {url} failed.\nError: {error}" + (f"\nMessage: {message}" if message is not None else ""))
+            f"Call to {url} failed.\nError: {error}" + (f"\nMessage: {message}" if bool(message) else ""))
 
     def get_short_id(self, entity_id: str):
         if entity_id is None:
@@ -396,7 +409,7 @@ class OpenAlexToNeo4J:
                 if len(results) == data['meta']['count']:
                     # add "api_url" property for debugging
                     for item in results:
-                        if item['id'] is not None:
+                        if bool(item['id']):
                             entity_id = self.get_short_id(item['id'])
                             data['api_url'] = f"{self.base_url}/{entity_type}s/{entity_id}"
                     return results
@@ -419,10 +432,13 @@ class OpenAlexToNeo4J:
         entity_type = self.get_type_from_entity_id(entity_id)
         return entity_type[0].upper() + entity_type[1:]
 
-    def create_node(self, label: str, data: dict) -> int:
-        if label not in self.node_labels:
-            raise ValueError(f"Invalid label {label}")
-        return self.neo4jdb.merge_node(label, data)
+    def create_node(self, node_label: str, node_data: dict) -> int:
+        if node_label not in self.node_labels:
+            raise ValueError(f"Invalid label {node_label}")
+        if len(node_data.keys()) == 0 or self.count_non_empty_properties(node_data) == 0:
+            print(node_data)
+            raise ValueError(f"No data")
+        return self.neo4jdb.merge_node(node_label, node_data)
 
     def node_exists(self, entity_id):
         entity_label = self.get_label_from_entity_id(entity_id)
@@ -448,12 +464,24 @@ class OpenAlexToNeo4J:
         data = self.get_single_entity(entity_type, entity_id)
         return data
 
+    def count_non_empty_properties(self, data: dict) -> int:
+        """
+        Returns the number of non-empty properties on the dict
+        :param data: a dict
+        :return: bool
+        """
+        counter = 0
+        for value in data.values():
+            if bool(value):
+                counter += 1
+        return counter
+
     def import_author(self, data, retrieve_full_data=False) -> int:
         if retrieve_full_data:
             data = self.get_full_entity_data(data['id'])
         if 'display_name_alternatives' in data:
             data['display_name_alternatives'] = "\n".join(data['display_name_alternatives'])
-        if 'last_known_institution' in data and data['last_known_institution'] is not None:
+        if 'last_known_institution' in data and bool(data['last_known_institution']):
             self.import_institution(data['last_known_institution'], retrieve_full_data=True)
             self.create_relationship(
                 "Author", data['id'],
@@ -463,16 +491,19 @@ class OpenAlexToNeo4J:
         self.log(f"Imported Author {data['display_name']}")
         return node_id
 
-    def import_venue(self, data, retrieve_full_data=False) -> int:
-        if data['id'] is not None and retrieve_full_data:
-            data = self.get_full_entity_data(data['id'])
-        if data['display_name'] is None and 'publisher' in data and data['publisher'] is not None:
-            data['display_name'] = data['publisher']
-        if 'issn' in data and data['issn'] is not None:
-            data['issn'] = ";".join(data['issn'])
-
-        node_id = self.create_node("Venue", data)
-        self.log(f"Imported Venue {data['display_name']}")
+    def import_venue(self, data_: dict, retrieve_full_data=False) -> int:
+        if retrieve_full_data:
+            if bool(data_['id']):
+                data_ = self.get_full_entity_data(data_['id'])
+            else:
+                raise ValueError("Invalid id")
+        if data_['display_name'] is None and 'publisher' in data_ and bool(data_['publisher']):
+            data_['display_name'] = data_['publisher']
+        if 'issn' in data_ and bool(data_['issn']):
+            data_['issn'] = ";".join(data_['issn'])
+        node_id = self.create_node("Venue", data_)
+        venue_name = data_['display_name'] or json.dumps(data_)
+        self.log(f"Imported Venue {venue_name}")
         return node_id
 
     def import_institution(self, data, retrieve_full_data=False) -> int:
@@ -501,11 +532,13 @@ class OpenAlexToNeo4J:
     def import_work(self, data, retrieve_full_data=False, import_cited_works=True) -> int:
         if retrieve_full_data:
             data = self.get_full_entity_data(data['id'])
-        if 'host_venue' in data and data['host_venue'] is not None:
+        if 'host_venue' in data \
+                and type(data['host_venue']) is dict \
+                and self.count_non_empty_properties(data['host_venue']) >= 1:
             venue_id = data['host_venue']['id']
             venu_node_id = self.import_venue(
                 data['host_venue'],
-                retrieve_full_data = venue_id is not None)
+                retrieve_full_data = bool(venue_id))
             self.create_relationship(
                 "Work", data['id'],
                 "Venue", venue_id or venu_node_id,
@@ -522,7 +555,9 @@ class OpenAlexToNeo4J:
                 data[key] = value
         node_id = self.create_node("Work", data)
         if import_cited_works and 'referenced_works' in data:
-            for cited_oa_id in data['referenced_works']:
+            num_cited_works = len(data['referenced_works'])
+            for idx, cited_oa_id in enumerate(data['referenced_works']):
+                self.log(f">>> Importing {idx+1} of {num_cited_works} cited works:")
                 self.import_work({"id": cited_oa_id}, retrieve_full_data=True, import_cited_works=False)
                 self.create_relationship(
                     "Work", data['id'],
@@ -550,7 +585,9 @@ if __name__ == "__main__":
     count = len(all_items)
     print(f"Importing {count} items...\n\n")
     while len(all_items):
-        data = all_items.pop(0)
-        importer.import_work(data)
+        work_data = all_items.pop(0)
+        print("=" * 80)
+        print("Importing " + work_data['title'] + "...")
+        importer.import_work(work_data)
         with open(cache_path, "w") as cache_file:
             json.dump(all_items, cache_file)
