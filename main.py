@@ -12,10 +12,10 @@ if __name__ == "__main__":
     _, email = parseaddr(os.environ.get("OPENALEX_EMAIL"))
     if not email:
         raise ValueError("Please define the environment variable OPENALEX_EMAIL to contain your email address")
-    graphdb = GraphDb(uri = os.environ.get("NEO4J_URI"),
-                      user = os.environ.get("NEO4J_USER"),
-                      password = os.environ.get("NEO4J_PASSWORD"),
-                      database = os.environ.get("NEO4J_DB"))
+    graphdb = GraphDb(uri=os.environ.get("NEO4J_URI"),
+                      user=os.environ.get("NEO4J_USER"),
+                      password=os.environ.get("NEO4J_PASSWORD"),
+                      database=os.environ.get("NEO4J_DB"))
     importer = OpenAlexToNeo4J(email, verbose=True, graphdb=graphdb)
     issn = sys.argv[1]
     cache_path = f"data/{issn}.json"

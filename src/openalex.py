@@ -159,41 +159,46 @@ class OpenAlexToNeo4J:
 
     def import_author(self, author_data, retrieve_full_data=False) -> int:
         if retrieve_full_data:
-            author_data = self.get_full_entity_data(author_data['id'])
+            try:
+                author_data = self.get_full_entity_data(author_data['id'])
+            except ApiError as err:
+                print(f"Could not access full data for Author '{author_data}': {err}")
+                pass
         if 'display_name_alternatives' in author_data:
             author_data['display_name_alternatives'] = "\n".join(author_data['display_name_alternatives'])
         if 'last_known_institution' in author_data and bool(author_data['last_known_institution']):
             institution_data = author_data['last_known_institution']
-            try:
-                self.import_institution(institution_data, retrieve_full_data=True)
-                self.create_relationship(
-                    "Author", author_data['id'],
-                    "Institution", institution_data['id'],
-                    "MEMBER_OF")
-            except ApiError as err:
-                print(f"Could not import Institution '{institution_data['display_name']}': {err}")
+            self.import_institution(institution_data, retrieve_full_data=True)
+            self.create_relationship(
+                "Author", author_data['id'],
+                "Institution", institution_data['id'],
+                "MEMBER_OF")
+
         node_id = self.create_node("Author", author_data)
         self.log(f"Imported Author {author_data['display_name']}")
         return node_id
 
-    def import_venue(self, data_: dict, retrieve_full_data=False) -> int:
+    def import_venue(self, venue_data: dict, retrieve_full_data=False) -> int:
         if retrieve_full_data:
-            if bool(data_['id']):
-                data_ = self.get_full_entity_data(data_['id'])
-            else:
-                raise ValueError("Invalid id")
-        if data_['display_name'] is None and 'publisher' in data_ and bool(data_['publisher']):
-            data_['display_name'] = data_['publisher']
-        if 'issn' in data_ and bool(data_['issn']):
-            data_['issn'] = ";".join(data_['issn'])
-        node_id = self.create_node("Venue", data_)
-        venue_name = data_['display_name'] or json.dumps(data_)
+            try:
+                venue_data = self.get_full_entity_data(venue_data['id'])
+            except ApiError as err:
+                print(f"Could not access full data for Venue '{venue_data}': {err}")
+        if venue_data['display_name'] is None and 'publisher' in venue_data and bool(venue_data['publisher']):
+            venue_data['display_name'] = venue_data['publisher']
+        if 'issn' in venue_data and bool(venue_data['issn']):
+            venue_data['issn'] = ";".join(venue_data['issn'])
+        node_id = self.create_node("Venue", venue_data)
+        venue_name = venue_data['display_name'] or json.dumps(venue_data)
         self.log(f"Imported Venue {venue_name}")
         return node_id
 
     def import_institution(self, inst_data: dict, retrieve_full_data=False) -> int:
         if retrieve_full_data:
-            inst_data = self.get_full_entity_data(inst_data['id'])
+            try:
+                inst_data = self.get_full_entity_data(inst_data['id'])
+            except ApiError as err:
+                print(f"Could not access full data for Institution '{inst_data}': {err}")
         if "display_name_alternatives" in inst_data and len(inst_data['display_name_alternatives']) > 0:
             inst_data['display_name_alternatives'] = "\n".join(inst_data['display_name_alternatives'])
         if "ids" in inst_data:
@@ -216,7 +221,10 @@ class OpenAlexToNeo4J:
 
     def import_work(self, work_data, retrieve_full_data=False, import_cited_works=True) -> int:
         if retrieve_full_data:
-            work_data = self.get_full_entity_data(work_data['id'])
+            try:
+                work_data = self.get_full_entity_data(work_data['id'])
+            except ApiError as err:
+                print(f"Could not access full data for Work '{work_data}': {err}")
         if 'host_venue' in work_data \
                 and type(work_data['host_venue']) is dict \
                 and self.count_non_empty_properties(work_data['host_venue']) >= 1:
