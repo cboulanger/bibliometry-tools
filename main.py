@@ -15,7 +15,7 @@ if __name__ == "__main__":
     graphdb = GraphDb(uri=os.environ.get("NEO4J_URI"),
                       user=os.environ.get("NEO4J_USER"),
                       password=os.environ.get("NEO4J_PASSWORD"),
-                      database=os.environ.get("NEO4J_DB"))
+                      database=os.environ.get("NEO4J_DB") or None)
     importer = OpenAlexToNeo4J(email, verbose=True, graphdb=graphdb)
     issn = sys.argv[1]
     cache_path = f"data/{issn}.json"
