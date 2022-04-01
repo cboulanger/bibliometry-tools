@@ -1,14 +1,16 @@
 import time
-
 from src.graphdb import GraphDb
 import requests
 import json
 from typing import Union
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 class ApiError(RuntimeError):
     pass
 
 class OpenAlexToNeo4J:
+    http: requests.Session
     graphdb: GraphDb = None
     email = ""
     verbose = False
@@ -24,6 +26,15 @@ class OpenAlexToNeo4J:
         if graphdb is None:
             raise ValueError("No GraphDb instance provided")
         self.graphdb = graphdb
+        # configure http api access to handle transient errors
+        retry_strategy = Retry(
+            total=3,
+            status_forcelist=[429, 500, 502, 503, 504],
+            method_whitelist=["HEAD", "GET", "OPTIONS"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.http = requests.Session()
+        self.http.mount("https://", adapter)
 
     def __del__(self):
         self.graphdb.close()
@@ -50,7 +61,7 @@ class OpenAlexToNeo4J:
             error = response.text
             message = None
         raise ApiError(
-            f"Call to {url} failed.\nError: {error}" + (f"\nMessage: {message}" if bool(message) else ""))
+            f"Call to {url} failed.\nError: {response.status_code} {error}" + (f"\nMessage: {message}" if bool(message) else ""))
 
     def get_short_id(self, entity_id: str):
         if entity_id is None:
@@ -64,7 +75,7 @@ class OpenAlexToNeo4J:
         if entity_type not in self.entity_types:
             raise ValueError(f"{entity_type} is not a valid entity type")
         url = f"{self.base_url}/{entity_type}s/{entity_id}"
-        response = requests.get(url, headers=self.get_headers())
+        response = self.http.get(url, headers=self.get_headers())
         if response.status_code == 200:
             data = response.json()
             data['api_url'] = url
@@ -80,7 +91,7 @@ class OpenAlexToNeo4J:
         results = []
         while True:
             url = f"{self.base_url}/{entity_type}s?filter={entity_filter}&per-page={per_page}&page={page}"
-            response = requests.get(url, headers=self.get_headers())
+            response = self.http.get(url, headers=self.get_headers())
             if response.status_code == 200:
                 data = response.json()
                 results.extend(data['results'])
@@ -119,9 +130,23 @@ class OpenAlexToNeo4J:
             raise ValueError(f"No data")
         return self.graphdb.merge_node(node_label, node_data)
 
-    def node_exists(self, entity_id):
+    def get_entity_node_id(self, entity_id:str) -> Union[int,None]:
+        """
+        Given an openalex entity id, return its node id if that entity exists in the graph
+        or None if it doesn't exist
+        :param entity_id:str
+        :return:bool
+        """
         entity_label = self.get_label_from_entity_id(entity_id)
-        return self.graphdb.get_node(f'{entity_label} {{id:"{entity_id}"}}') is not None
+        return self.graphdb.get_node_id(f'{entity_label} {{id:"{entity_id}"}}')
+
+    def entity_exists(self, entity_id:str) -> bool:
+        """
+        Given an openalex entity id, return true if that entity exists in the graph, otherwise false
+        :param entity_id:str
+        :return:bool
+        """
+        return self.get_entity_node_id(entity_id) is not None
 
     def create_relationship(self,
                             source_label: str, source_id: Union[str, int],
@@ -130,13 +155,16 @@ class OpenAlexToNeo4J:
                             source_id_property="id", target_id_property="id", ):
         if source_label not in self.node_labels or target_label not in self.node_labels:
             raise ValueError("Invalid Source or target label")
+        source_node_selector = source_label + f"{{{source_id_property}:" + json.dumps(source_id) + "}" if type(
+                source_id) is str else source_id
+        target_node_selector = target_label + f"{{{target_id_property}:" + json.dumps(target_id) + "}" if type(
+                target_id) is str else target_id
         self.graphdb.merge_relationship(
-            source_node_selector=source_label + f"{{{source_id_property}:" + json.dumps(source_id) + "}" if type(
-                source_id) is str else source_id,
-            target_node_selector=target_label + f"{{{target_id_property}:" + json.dumps(target_id) + "}" if type(
-                target_id) is str else target_id,
+            source_node_selector=source_node_selector,
+            target_node_selector=target_node_selector,
             relationship=relationship,
         )
+        self.log(f"Created relationship ({source_node_selector})-[{relationship}]->({target_node_selector})")
 
     def get_full_entity_data(self, entity_id: str):
         if entity_id is None:
@@ -166,17 +194,21 @@ class OpenAlexToNeo4J:
                 pass
         if 'display_name_alternatives' in author_data:
             author_data['display_name_alternatives'] = "\n".join(author_data['display_name_alternatives'])
+        # create node
+        author_node_id = self.create_node("Author", author_data)
+        # link institution
         if 'last_known_institution' in author_data and bool(author_data['last_known_institution']):
             institution_data = author_data['last_known_institution']
-            self.import_institution(institution_data, retrieve_full_data=True)
+            institution_id = institution_data['id']
+            institution_node_id = self.get_entity_node_id(institution_id) if institution_id else None
+            if not institution_node_id:
+                institution_node_id = self.import_institution(institution_data, retrieve_full_data=True)
             self.create_relationship(
-                "Author", author_data['id'],
-                "Institution", institution_data['id'],
+                "Author", author_node_id,
+                "Institution", institution_node_id,
                 "MEMBER_OF")
-
-        node_id = self.create_node("Author", author_data)
         self.log(f"Imported Author {author_data['display_name']}")
-        return node_id
+        return author_node_id
 
     def import_venue(self, venue_data: dict, retrieve_full_data=False) -> int:
         if retrieve_full_data:
@@ -207,17 +239,19 @@ class OpenAlexToNeo4J:
         if "geo" in inst_data:
             for key, value in inst_data['geo'].items():
                 inst_data[key] = value
+        inst_node_id = self.create_node("Institution", inst_data)
         if retrieve_full_data and 'associated_institutions' in inst_data:
             for ass_inst_data in inst_data['associated_institutions']:
+                ass_inst_id = ass_inst_data['id']
+                ass_inst_node_id = self.get_entity_node_id(ass_inst_id) if ass_inst_id else None
                 # create links only to institutions that already exist
-                if ass_inst_data['id'] != inst_data['id'] and self.node_exists(ass_inst_data['id']):
+                if ass_inst_node_id and ass_inst_id != inst_node_id:
                     self.create_relationship(
-                        "Institution", inst_data['id'],
-                        "Institution", ass_inst_data['id'],
+                        "Institution", inst_node_id,
+                        "Institution", ass_inst_node_id,
                         "AFFILIATED_WITH")
-        node_id = self.create_node("Institution", inst_data)
         self.log(f"Imported Institution {inst_data['display_name']}")
-        return node_id
+        return inst_node_id
 
     def import_work(self, work_data, retrieve_full_data=False, import_cited_works=True) -> int:
         if retrieve_full_data:
@@ -225,48 +259,50 @@ class OpenAlexToNeo4J:
                 work_data = self.get_full_entity_data(work_data['id'])
             except ApiError as err:
                 print(f"Could not access full data for Work '{work_data}': {err}")
+        if 'biblio' in work_data:
+            for key, value in work_data['biblio'].items():
+                work_data[key] = value
+        work_node_id = self.create_node("Work", work_data)
         if 'host_venue' in work_data \
                 and type(work_data['host_venue']) is dict \
                 and self.count_non_empty_properties(work_data['host_venue']) >= 1:
             venue_id = work_data['host_venue']['id']
+            venue_node_id = self.get_entity_node_id(venue_id) if venue_id else None
             try:
-                venu_node_id = self.import_venue(
-                    work_data['host_venue'],
-                    retrieve_full_data=bool(venue_id))
+                if not venue_node_id:
+                    venue_node_id = self.import_venue(work_data['host_venue'],retrieve_full_data=bool(venue_id))
                 self.create_relationship(
-                    "Work", work_data['id'],
-                    "Venue", venue_id or venu_node_id,
+                    "Work", work_node_id,
+                    "Venue", venue_node_id,
                     "PUBLISHED_IN")
             except ApiError as err:
                 print(f"Could not import Work '{work_data['title']}': {err}")
         for authorship in work_data['authorships']:
             author_id = authorship['author']['id']
+            author_node_id = self.get_entity_node_id(author_id)
             try:
-                author_node_id = self.import_author(authorship['author'], retrieve_full_data=True)
+                if not author_node_id:
+                    author_node_id = self.import_author(authorship['author'], retrieve_full_data=True)
                 self.create_relationship(
-                    "Author", author_id or author_node_id,
-                    "Work", work_data['id'],
+                    "Author", author_node_id ,
+                    "Work", work_node_id,
                     "CREATOR_OF")
             except ApiError as err:
                 print(f"Could not import Author {authorship['author']['display_name']}:{err}")
-        if 'biblio' in work_data:
-            for key, value in work_data['biblio'].items():
-                work_data[key] = value
-        node_id = self.create_node("Work", work_data)
         if import_cited_works and 'referenced_works' in work_data:
             cited_works_oa_ids = work_data['referenced_works']
             num_cited_works = len(cited_works_oa_ids)
             for idx, cited_work_oa_id in enumerate(cited_works_oa_ids):
                 self.log(f">>> Importing {idx + 1} of {num_cited_works} cited works:")
                 try:
-                    node_id = self.import_work({"id": cited_work_oa_id},
+                    cited_work_oa_id = self.import_work({"id": cited_work_oa_id},
                                                retrieve_full_data=True,
                                                import_cited_works=False)
                     self.create_relationship(
-                        "Work", work_data['id'],
-                        "Work", cited_work_oa_id or node_id,
+                        "Work", work_node_id,
+                        "Work", cited_work_oa_id,
                         "CITES")
                 except ApiError as err:
                     print(f"Could not import Cited Work '{cited_work_oa_id}':{err}")
         self.log(f"Imported Work {work_data['title']}")
-        return node_id
+        return work_node_id

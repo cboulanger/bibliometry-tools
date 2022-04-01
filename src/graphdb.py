@@ -2,6 +2,8 @@ from neo4j import GraphDatabase
 import json
 from typing import Union
 
+class MergeFailedError(RuntimeError):
+    pass
 
 class GraphDb:
 
@@ -28,6 +30,10 @@ class GraphDb:
         with self.driver.session(database=self.database) as session:
             return session.read_transaction(self._get_node_tx, identifier)
 
+    def get_node_id(self, identifier):
+        with self.driver.session(database=self.database) as session:
+            return session.read_transaction(self._get_node_id_tx, identifier)
+
     @staticmethod
     def _merge_node_transaction(tx, node_type: str, node_data: dict) -> int:
         if not node_type:
@@ -49,7 +55,9 @@ class GraphDb:
         try:
             result = tx.run(query).single()
         except Exception as err:
-            raise RuntimeError(f"Query failed:\nQuery: {query}\nError: {err}")
+            raise MergeFailedError(f"Query failed:\nQuery: {query}\nError: {err}")
+        if result is None:
+            raise MergeFailedError("The following merge failed: " + query)
         node_id = int(result[0])
         return node_id
 
@@ -73,7 +81,7 @@ class GraphDb:
         elif type(source_node_selector) is str and type(target_node_selector) is int:
             query = f"MATCH (a:{source_node_selector}), (b) WHERE id(b)={target_node_selector}"
         elif type(source_node_selector) is int and type(target_node_selector) is str:
-            query = f"MATCH (a), (b:{target_node_selector}) WHERE id(a)={source_node_selector})"
+            query = f"MATCH (a), (b:{target_node_selector}) WHERE id(a)={source_node_selector}"
         elif type(source_node_selector) is int and type(target_node_selector) is int:
             query = f"MATCH (a),(b) WHERE id(a)={source_node_selector} and id(b)={target_node_selector}"
         else:
@@ -83,10 +91,19 @@ class GraphDb:
         try:
             result = tx.run(query).single()
         except Exception as err:
-            raise RuntimeError(f"Query failed:\nQuery: {query}\nError: {err}")
-        return result[0] if result is not None else None
+            raise MergeFailedError(f"Query failed:\nQuery: {query}\nError: {err}")
+        if result is None:
+            raise MergeFailedError("The following merge failed: " + query)
+        return result[0]
+
     @staticmethod
     def _get_node_tx(tx, identifier):
         query = f"MATCH (a:{identifier}) RETURN a"
+        result = tx.run(query).single()
+        return result[0] if result is not None else None
+
+    @staticmethod
+    def _get_node_id_tx(tx, identifier):
+        query = f"MATCH (a:{identifier}) RETURN id(a)"
         result = tx.run(query).single()
         return result[0] if result is not None else None

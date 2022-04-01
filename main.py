@@ -33,6 +33,9 @@ if __name__ == "__main__":
         work_data = all_items.pop(0)
         print("=" * 80)
         print("Importing " + work_data['title'] + "...")
-        importer.import_work(work_data)
-        with open(cache_path, "w") as cache_file:
-            json.dump(all_items, cache_file)
+        try:
+            importer.import_work(work_data)
+            with open(cache_path, "w") as cache_file:
+                json.dump(all_items, cache_file)
+        except Exception as err:
+            print("ERROR: " + str(err))
