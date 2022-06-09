@@ -5,3 +5,5 @@ networkx
 pikepdf
 progress
 pdfminer.six # Debian requirement: sudo apt-get install build-essential python3-dev libffi-dev
+pymupdf
+packaging

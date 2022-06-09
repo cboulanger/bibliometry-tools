@@ -12,6 +12,7 @@ from typing import Any, Container, Iterable, List, Optional
 import pdfminer.high_level
 from pdfminer.layout import LAParams
 from pdfminer.utils import AnyIO
+from progress.bar import Bar
 
 logging.basicConfig()
 
@@ -315,7 +316,12 @@ def extract_dir(**kwargs):
         kwargs['output_dir'] = None
     else:
         output_dir = input_dir
-    for file_name in os.listdir(input_dir):
+    filenames = os.listdir(input_dir)
+    progressbar = Bar("Extracting text...", bar_prefix=' [', bar_suffix='] ', empty_fill='_',
+                      fill='▓', suffix='%(index)d/%(max)d',
+                      max=len(filenames))
+    for i, file_name in enumerate(filenames):
+        progressbar.goto(i)
         file_path = os.path.join(input_dir, file_name)
         kwargs['files'] = [file_path]
         if os.path.isdir(file_path):
