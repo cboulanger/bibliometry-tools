@@ -1,9 +1,25 @@
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, Result
 import json
 from typing import Union
+from abc import ABC
+
+
+class Work(ABC):
+    LABEL = None
+    PROP_DISPLAY_NAME = None
+    PROP_PUBLICATION_YEAR = None
+    REL_CITES = None
+
+
+class Creator(ABC):
+    LABEL = None
+    PROP_DISPLAY_NAME = None
+    REL_CREATOR_OF = None
+
 
 class MergeFailedError(RuntimeError):
     pass
+
 
 class GraphDb:
 
@@ -13,6 +29,10 @@ class GraphDb:
 
     def close(self):
         self.driver.close()
+
+    def run_query(self, query) -> Result:
+        with self.driver.session(database=self.database) as session:
+            return session.read_transaction(lambda tx: tx.run(query))
 
     def merge_node(self, node_type: str, node_data: dict):
         with self.driver.session(database=self.database) as session:
@@ -107,3 +127,4 @@ class GraphDb:
         query = f"MATCH (a:{identifier}) RETURN id(a)"
         result = tx.run(query).single()
         return result[0] if result is not None else None
+
