@@ -317,11 +317,11 @@ def extract_dir(**kwargs):
     else:
         output_dir = input_dir
     filenames = os.listdir(input_dir)
-    progressbar = Bar("Extracting text...", bar_prefix=' [', bar_suffix='] ', empty_fill='_',
-                      fill='▓', suffix='%(index)d/%(max)d',
-                      max=len(filenames))
+    progressbar = Bar("Extracting text...",
+                      bar_prefix=' [', bar_suffix='] ', empty_fill='_',
+                      fill='▓', suffix='%(index)d/%(max)d', max=len(filenames))
     for i, file_name in enumerate(filenames):
-        progressbar.goto(i)
+        progressbar.goto(i+1)
         file_path = os.path.join(input_dir, file_name)
         kwargs['files'] = [file_path]
         if os.path.isdir(file_path):
@@ -330,6 +330,8 @@ def extract_dir(**kwargs):
         elif not file_name.endswith(".pdf"):
             continue
         kwargs['outfile'] = os.path.join(output_dir, file_name.strip(".pdf") + ".txt")
+        if os.path.isfile(kwargs['outfile']):
+            continue
         outfp = extract_text(**kwargs)
         outfp.close()
 

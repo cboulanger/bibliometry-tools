@@ -9,12 +9,12 @@ output_dir = sys.argv[2]
 dpi = 200
 
 filenames = os.listdir(input_dir)
-progressbar = Bar("Extracting text...", bar_prefix=' [', bar_suffix='] ', empty_fill='_',
-                  fill='▓', suffix='%(index)d/%(max)d',
-                  max=len(filenames))
+progressbar = Bar(f"Converting native PDF to image PDF ({dpi} DPI)...",
+                  bar_prefix=' [', bar_suffix='] ', empty_fill='_',
+                  fill='▓', suffix='%(index)d/%(max)d', max=len(filenames))
 
 for i, file_name in enumerate(filenames):
-    progressbar.goto(i)
+    progressbar.goto(i+1)
     if not file_name.endswith(".pdf"):
         continue
     input_path = os.path.join(input_dir, file_name)
