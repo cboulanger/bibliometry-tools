@@ -115,7 +115,6 @@ for year in range(year_min, year_max):
                 rows = kw_weights[lang].values()
                 df = pd.DataFrame(rows, index=keywords, columns=['weight']).sort_values(by='weight', ascending=False)
                 df.to_csv(os.path.join(output_dir_path, f"{period}-{lang}.csv"))
-        break
 
 # create a grid of keywords, periods, and weights
 all_kw_weights = {"de":{}, "en": {}}
