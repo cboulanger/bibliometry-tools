@@ -1,4 +1,5 @@
 import os, sys
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from src.domain_terminology_extraction import TextRank4Keyword, get_words_from_file, get_replace_dict_from_file
 import pandas as pd
@@ -6,42 +7,50 @@ import json, csv
 import re
 import inflect
 
+infl = inflect.engine()
+
 # Command line arguments
 corpus_dir = sys.argv[1]
 period_size = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-replace_terms_file_path = sys.argv[3] if len(sys.argv) > 3 else None
 
 if not os.path.isdir(corpus_dir):
     raise ValueError(f'Not a directory: {corpus_dir}')
-if replace_terms_file_path and not os.path.isfile(replace_terms_file_path):
-    raise ValueError(f'Not a file: {replace_terms_file_path}')
 
-# replace terms
-replace_terms = get_replace_dict_from_file(replace_terms_file_path) if replace_terms_file_path else None
-infl = inflect.engine()
-
-# metadata
+# corpus dir paths
 corpus_dir_basename = os.path.basename(corpus_dir)
 corpus_dir_dirname = os.path.dirname(corpus_dir)
 corpus_dir_prefix = corpus_dir_basename[:corpus_dir_basename.find("-")]
-doi_metadata_file = os.path.join(corpus_dir_dirname, corpus_dir_prefix + ".csv")
+replace_terms_file_path = os.path.join(corpus_dir_dirname, corpus_dir_prefix + "-replace-terms.csv")
+
+# replace terms
+if not os.path.isfile(replace_terms_file_path):
+    raise FileNotFoundError(f"Missing term replacement file {replace_terms_file_path}")
+replace_terms = get_replace_dict_from_file(replace_terms_file_path)
+
+# metadata
+doi_metadata_file = os.path.join(corpus_dir_dirname, corpus_dir_prefix + "-doi.csv")
 if not os.path.isfile(doi_metadata_file):
     raise FileNotFoundError(f"Metadata file {doi_metadata_file} does not exist")
 md = pd.read_csv(doi_metadata_file)
-
 
 # Partition the corpus
 corpus_files = os.listdir(corpus_dir)
 corpus_files.sort()
 years_files = {}
 
-
+print("Looking up publication years from DOI...")
 for file_name in corpus_files:
-    doi = file_name.strip(".txt").replace("_", "/", 1)
+    doi = file_name.replace("_", "/", 1).strip(".txt") \
+        .strip(".pdf") \
+        .strip(".pdftotext") \
+        .strip(".docx")\
+        .strip(".txtUnstructured")
+    print(doi)
     try:
-        pubyear = int(md.loc[md['DOI'] == doi]['PubYear'])
-    except:
-        p = re.compile(r"\.([0-9]{4})\.")
+        pubyear = md.loc[md['DOI'] == doi]['PubYear']
+        pubyear = int(pubyear)
+    except TypeError:
+        p = re.compile(r"\D((19|20)\d{2})\D")
         pubyear = int(p.search(doi).groups()[0])
         if not pubyear:
             print(f"Cannot determine year for {doi}")
@@ -85,6 +94,7 @@ for year in range(year_min, year_max):
         if os.path.isfile(output_file_path):
             print(f"- {period} ({num_docs} {infl.plural('document', num_docs)}) already processed...")
             continue
+        break
         # process period
         print(f"- Processing {period} ({num_docs} {infl.plural('document', num_docs)})...")
         text = ' '.join(words)
@@ -94,17 +104,27 @@ for year in range(year_min, year_max):
         with open(output_file_path, "w") as f:
             json.dump(kw_weights, f)
 
-
 # create a grid of keywords, periods, and weights
 all_kw_weights = {}
 for period in period_list:
-    file_name = os.path.join(output_dir_path, f"{period}.json")
-    with open(file_name) as f:
+    file_path = os.path.join(output_dir_path, f"{period}.json")
+    if not os.path.isfile(file_path):
+        print(f"Skipping non-existent data for {period}..")
+        continue
+    with open(file_path) as f:
         kw_weights = json.load(f)
+        ignore_list = replace_terms.keys()
         for kw, weight in kw_weights.items():
+            if kw in ignore_list:
+                continue
             if kw in all_kw_weights.keys():
                 all_kw_weights[kw][period] = weight
-            all_kw_weights[kw] = {period:weight}
+            else:
+                all_kw_weights[kw] = {period: weight}
 
+# create dataframe keywords x periods, containing the weights
+rows = all_kw_weights.values()
+keywords = all_kw_weights.keys()
+df = pd.DataFrame(rows, index=keywords)
 
-
+print(df.head(100))
