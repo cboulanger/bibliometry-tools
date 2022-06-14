@@ -73,23 +73,26 @@ for year in range(year_min, year_max):
         period_list.append(period)
         # determine path of outputfile and skip computation if file exists
         output_file_path = os.path.join(output_dir_path, f"{period}.json")
-        if os.path.isfile(output_file_path):
-            continue
     for file_name in years_files[year]:
         file_path = os.path.join(corpus_dir, file_name)
         words.extend(get_words_from_file(file_path, replace_terms=replace_terms))
         num_docs += 1
     if year == period_end:
+        # start a new period
+        period_start = None
+        # skip already processed periods
+        if os.path.isfile(output_file_path):
+            print(f"- {period} ({num_docs} document{'s' if num_docs != 1 else ''}) already processed...")
+            continue
         # process period
-        print(f"Processing {period} ({num_docs} document(s))...")
+        print(f"- Processing {period} ({num_docs} document(s))...")
         text = ' '.join(words)
         tr4w = TextRank4Keyword()
         tr4w.analyze(text)
         kw_weights = tr4w.get_weights()
         with open(output_file_path, "w") as f:
             json.dump(kw_weights, f)
-        # start a new period
-        period_start = None
+
 
 # create a grid of keywords, periods, and weights
 all_kw_weights = {}
