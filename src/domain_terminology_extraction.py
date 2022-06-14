@@ -13,14 +13,23 @@ import sys, os, regex as re, csv
 from collections import OrderedDict
 import numpy as np
 import spacy
-from spacy.lang.en.stop_words import STOP_WORDS
 
 
 class TextRank4Keyword():
     """Extract keywords from text"""
 
-    def __init__(self):
-        self.nlp = spacy.load('en_core_web_sm')
+    def __init__(self, language="en"):
+        if language == "en":
+            from spacy.lang.en.stop_words import STOP_WORDS
+            self.stopwords = STOP_WORDS
+            self.nlp = spacy.load('en_core_web_sm')
+        elif language == "de":
+            from spacy.lang.de.stop_words import STOP_WORDS
+            self.stopwords = STOP_WORDS
+            self.nlp = spacy.load('de_core_news_sm')
+        else:
+            raise ValueError(f"Unsupported language {language}")
+        self.language = language
         self.d = 0.85  # damping coefficient, usually is .85
         self.min_diff = 1e-5  # convergence threshold
         self.steps = 10  # iteration steps
@@ -28,7 +37,7 @@ class TextRank4Keyword():
 
     def set_stopwords(self, stopwords):
         """Set stop words"""
-        for word in STOP_WORDS.union(set(stopwords)):
+        for word in self.stopwords.union(set(stopwords)):
             lexeme = self.nlp.vocab[word]
             lexeme.is_stop = True
 
@@ -180,7 +189,7 @@ class TextRank4Keyword():
 def get_words_from_file(file_path, replace_terms: dict = None) -> list:
     """
     Given a file path and a dict of terms to be replaced, return a list of words
-    contained in the file
+    contained in the file which are longer than three letters - German stopwords removed
     :param file_path:
     :param replace_terms:
     :return:
@@ -197,8 +206,9 @@ def get_words_from_file(file_path, replace_terms: dict = None) -> list:
             text = re.sub(key, value, text)
     # remove punctuation
     text = re.sub("\p{P}", "", text)
-    # return remaining words
-    return text.split()
+    # return remaining words longer than 3 letters
+    words = [w for w in text.split() if len(w) > 3]
+    return words
 
 
 def extract_keywords(corpus_dir_or_file,
@@ -230,6 +240,7 @@ def extract_keywords(corpus_dir_or_file,
                  trigrams=trigrams, stopwords=stopwords)
     return tr4w.get_keywords(keyword_size)
 
+
 def get_replace_dict_from_file(replace_terms_file_path):
     """
     Reads a csv file containing terms in column 1 that should be replaced with the value of column 2 or
@@ -245,6 +256,7 @@ def get_replace_dict_from_file(replace_terms_file_path):
             if row[0]:
                 replace_terms_dict[row[0]] = row[1] if len(row) > 1 else ""
     return replace_terms_dict
+
 
 if __name__ == "__main__":
     corpus_dir_or_file = sys.argv[1]
