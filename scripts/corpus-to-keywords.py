@@ -94,7 +94,6 @@ for year in range(year_min, year_max):
         if os.path.isfile(output_file_path):
             print(f"- {period} ({num_docs} {infl.plural('document', num_docs)}) already processed...")
             continue
-        break
         # process period
         print(f"- Processing {period} ({num_docs} {infl.plural('document', num_docs)})...")
         text = ' '.join(words)
