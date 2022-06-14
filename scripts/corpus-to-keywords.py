@@ -3,9 +3,9 @@ import os, sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from src.domain_terminology_extraction import TextRank4Keyword, get_words_from_file, get_replace_dict_from_file
 import pandas as pd
-import json, csv
-import re
+import json, csv, regex as re
 import inflect
+from langdetect import detect
 
 infl = inflect.engine()
 
@@ -71,59 +71,78 @@ period_start = None
 period_list = []
 for year in range(year_min, year_max):
     if period_start is None:
-        num_docs = 0
-        words = []
+        files = []
         period_start = year
         period_end = year + (period_size - 1)
         period = f"{str(period_start)}-{str(period_end)}" if period_start != period_end else str(period_start)
         period_list.append(period)
-        # determine path of outputfile and skip computation if file exists
-        output_file_path = os.path.join(output_dir_path, f"{period}.json")
     if year not in years_files.keys():
         print(f"- No data for {year}")
         continue
     for file_name in years_files[year]:
         file_path = os.path.join(corpus_dir, file_name)
-        words.extend(get_words_from_file(file_path, replace_terms=replace_terms))
-        num_docs += 1
-    if year == period_end:
+        files.append(file_path)
+    if year == period_end or year == year_max:
         # start a new period
         period_start = None
+        num_files = len(files)
         # skip already processed periods
-        if os.path.isfile(output_file_path):
-            print(f"- {period} ({num_docs} {infl.plural('document', num_docs)}) already processed...")
+        if os.path.isfile(os.path.join(output_dir_path, f"{period}-en.csv")) \
+            or os.path.isfile(os.path.join(output_dir_path, f"{period}-de.csv")):
+            print(f"- {period} ({num_files} {infl.plural('document', num_files)}) already processed...")
             continue
         # process period
-        print(f"- Processing {period} ({num_docs} {infl.plural('document', num_docs)})...")
-        text = ' '.join(words)
-        tr4w = TextRank4Keyword()
-        tr4w.analyze(text)
-        kw_weights = tr4w.get_weights()
-        with open(output_file_path, "w") as f:
-            json.dump(kw_weights, f)
+        print(f"- Processing {period} ({num_files} {infl.plural('document', num_files)})...")
+        kw_weights = {"de":{}, "en": {}}
+        docs = {"de":[], "en": []}
+        for file_path in files:
+            file_name = os.path.basename(file_path)
+            words = get_words_from_file(file_path, replace_terms=replace_terms)
+            doc = ' '.join(words)
+            lang = detect(doc)
+            if lang != "de" and lang != "en":
+                # we can only deal with german and english
+                print(f"Detected unsupported language {lang} - skipping {file_name}...")
+                continue
+            docs[lang].append(doc)
+        for lang in ["de", "en"]:
+            tr4w = TextRank4Keyword(lang)
+            tr4w.analyze(' '.join(docs[lang]))
+            for kw, row in tr4w.get_weights().items():
+                kw_weights[lang][kw] = row
+            keywords = kw_weights[lang].keys()
+            if len(keywords):
+                rows = kw_weights[lang].values()
+                df = pd.DataFrame(rows, index=keywords, columns=['weight']).sort_values(by='weight', ascending=False)
+                df.to_csv(os.path.join(output_dir_path, f"{period}-{lang}.csv"))
+        break
 
 # create a grid of keywords, periods, and weights
-all_kw_weights = {}
-for period in period_list:
-    file_path = os.path.join(output_dir_path, f"{period}.json")
-    if not os.path.isfile(file_path):
-        print(f"Skipping non-existent data for {period}..")
-        continue
-    with open(file_path) as f:
-        kw_weights = json.load(f)
-        ignore_list = replace_terms.keys()
-        for kw, weight in kw_weights.items():
-            if kw in ignore_list:
-                continue
-            if kw in all_kw_weights.keys():
-                all_kw_weights[kw][period] = weight
-            else:
-                all_kw_weights[kw] = {period: weight}
+all_kw_weights = {"de":{}, "en": {}}
+for lang in ["en", "de"]:
+    for period in period_list:
+        file_path = os.path.join(output_dir_path, f"{period}-{lang}.csv")
+        if not os.path.isfile(file_path):
+            #print(f"Skipping non-existent data for {period}..")
+            continue
+        with open(file_path) as f:
+            reader = csv.reader(f)
+            ignore_list = replace_terms.keys()
+            for row in reader:
+                kw, weight = row
+                if kw in ignore_list:
+                    continue
+                if kw in all_kw_weights[lang].keys():
+                    all_kw_weights[lang][kw][period] = weight
+                else:
+                    all_kw_weights[lang][kw] = {period: weight}
 
-# create dataframe keywords x periods, containing the weights and save to filesystem
-rows = all_kw_weights.values()
-keywords = all_kw_weights.keys()
-df = pd.DataFrame(rows, index=keywords)
-pickle_path = os.path.join(corpus_dir_dirname, corpus_dir_basename + ".pkl")
-df.to_pickle(pickle_path)
-print(f"Dataframe containing the weights per keyword and period has been saved to {pickle_path}")
+    # create dataframe keywords x periods, containing the weights and save to filesystem
+    keywords = all_kw_weights[lang].keys()
+    if len(keywords):
+        rows = all_kw_weights[lang].values()
+        df = pd.DataFrame(rows, index=keywords)
+        pickle_path = os.path.join(corpus_dir_dirname, corpus_dir_basename + f"-{lang}.pkl")
+        df.to_pickle(pickle_path)
+        print(f"Dataframe containing the weights per keyword and period has been saved to {pickle_path}")
+        print(df)
