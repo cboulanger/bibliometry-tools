@@ -41,37 +41,42 @@ class TextRank4Keyword():
             lexeme = self.nlp.vocab[word]
             lexeme.is_stop = True
 
-    def sentence_segment(self, doc, candidate_pos, lower, bigrams, trigrams):
-        """Store those words only in cadidate_pos"""
+    def sentence_segment(self, doc,
+                         lower=True,
+                         unigram_cand_pos=['NOUN', 'VERB'],
+                         bigram_cand_pos=None,
+                         trigram_cand_pos=None):
+        """Store lemmatized words if they match the candidate POS types"""
+
         sentences = []
         for sent in doc.sents:
             selected_words = []
-            bigram_words = []
             for token in sent:
-                bigram_words.append(token.text)
-                # Store words only with cadidate POS tag
-                if token.pos_ in candidate_pos and token.is_stop is False:
+                # Store words only with candidate POS tag
+                if token.pos_ in unigram_cand_pos and token.is_stop is False:
                     if lower is True:
-                        selected_words.append(token.text.lower())
+                        selected_words.append(token.lemma_.lower())
                     else:
-                        selected_words.append(token.text)
-            if bigrams == True:
+                        selected_words.append(token.lemma_)
+            if bigram_cand_pos is not None:
                 for i in range(len(sent) - 1):
-                    if sent[i].pos_ in candidate_pos and sent[i].is_stop is False and sent[
-                        i + 1].pos_ in candidate_pos and sent[i + 1].is_stop is False:
+                    if sent[i].pos_ in bigram_cand_pos and sent[i].is_stop is False \
+                            and sent[i + 1].pos_ in bigram_cand_pos and sent[i + 1].is_stop is False:
+                        bigram = str(sent[i].lemma_ + " " + sent[i + 1].lemma_)
                         if lower is True:
-                            selected_words.append(sent[i].text.lower())
+                            selected_words.append(bigram.lower())
                         else:
-                            selected_words.append(str(sent[i].text + " " + sent[i + 1].text))
-            if trigrams == True:
+                            selected_words.append(bigram)
+            if trigram_cand_pos is not None:
                 for i in range(len(sent) - 2):
-                    if sent[i].pos_ in candidate_pos and sent[i].is_stop is False and sent[
-                        i + 1].pos_ in candidate_pos and sent[i + 1].is_stop is False and sent[
-                        i + 2].pos_ in candidate_pos and sent[i + 2].is_stop is False:
+                    if sent[i].pos_ in trigram_cand_pos and sent[i].is_stop is False \
+                            and sent[i + 1].pos_ in trigram_cand_pos and sent[i + 1].is_stop is False \
+                            and sent[i + 2].pos_ in trigram_cand_pos and sent[i + 2].is_stop is False:
+                        trigram = str(sent[i].lemma_ + " " + sent[i + 1].lemma_ + " " + sent[i + 2].lemma_)
                         if lower is True:
-                            selected_words.append(sent[i].text.lower())
+                            selected_words.append(trigram.lower())
                         else:
-                            selected_words.append(str(sent[i].text + " " + sent[i + 1].text + " " + sent[i + 2].text))
+                            selected_words.append(trigram)
             sentences.append(selected_words)
         return sentences
 
@@ -137,11 +142,11 @@ class TextRank4Keyword():
         return list(self.get_weights().keys())[:keyword_size]
 
     def analyze(self, text,
-                candidate_pos=['NOUN', 'VERB'],
+                unigram_cand_pos=['NOUN', 'VERB'],
+                bigram_cand_pos=None,
+                trigram_cand_pos=None,
                 window_size=4,
-                lower=False,
-                bigrams=True,
-                trigrams=True,
+                lower=True,
                 stopwords=list()):
         """Main function to analyze text"""
 
@@ -155,7 +160,11 @@ class TextRank4Keyword():
         doc = self.nlp(text)
 
         # Filter sentences
-        sentences = self.sentence_segment(doc, candidate_pos, lower, bigrams, trigrams)  # list of list of words
+        sentences = self.sentence_segment(doc,
+                                          lower=lower,
+                                          unigram_cand_pos=unigram_cand_pos,
+                                          bigram_cand_pos=bigram_cand_pos,
+                                          trigram_cand_pos=trigram_cand_pos)
 
         # Build vocabulary
         vocab = self.get_vocab(sentences)
@@ -206,8 +215,8 @@ def get_words_from_file(file_path, replace_terms: dict = None) -> list:
             text = re.sub(key, value, text)
     # remove punctuation
     text = re.sub("\p{P}", "", text)
-    # return remaining words longer than 3 letters
-    words = [w for w in text.split() if len(w) > 3]
+    # return remaining words longer than 3 letters (2-3-letter upper-case acronyms are ok)
+    words = [w for w in text.split() if len(w) > 3 or (len(w) > 1 and w.isupper())]
     return words
 
 
@@ -216,9 +225,9 @@ def extract_keywords(corpus_dir_or_file,
                      keyword_size=20,
                      window_size=4,
                      lower=False,
-                     bigrams=True,
-                     trigrams=True,
-                     candidate_pos: list = ['NOUN', 'VERB'],
+                     unigram_cand_pos=['NOUN', 'VERB'],
+                     bigram_cand_pos=None,
+                     trigram_cand_pos=None,
                      stopwords=list()):
     words = []
     if os.path.isdir(corpus_dir_or_file):
@@ -236,8 +245,13 @@ def extract_keywords(corpus_dir_or_file,
 
     text = ' '.join(words)
     tr4w = TextRank4Keyword()
-    tr4w.analyze(text, candidate_pos=candidate_pos, window_size=window_size, lower=lower, bigrams=bigrams,
-                 trigrams=trigrams, stopwords=stopwords)
+    tr4w.analyze(text,
+                 window_size=window_size,
+                 lower=lower,
+                 unigram_cand_pos=unigram_cand_pos,
+                 bigram_cand_pos=bigram_cand_pos,
+                 trigram_cand_pos=trigram_cand_pos,
+                 stopwords=stopwords)
     return tr4w.get_keywords(keyword_size)
 
 
@@ -253,7 +267,7 @@ def get_replace_dict_from_file(replace_terms_file_path):
     with open(replace_terms_file_path) as f:
         reader = csv.reader(f)
         for row in reader:
-            if row[0]:
+            if row is list and row[0]:
                 replace_terms_dict[row[0]] = row[1] if len(row) > 1 else ""
     return replace_terms_dict
 

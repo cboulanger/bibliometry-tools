@@ -107,14 +107,18 @@ for year in range(year_min, year_max):
             docs[lang].append(doc)
         for lang in ["de", "en"]:
             tr4w = TextRank4Keyword(lang)
-            tr4w.analyze(' '.join(docs[lang]))
+            tr4w.analyze(' '.join(docs[lang]),
+                         lower=True,
+                         unigram_cand_pos=['NOUN'],
+                         bigram_cand_pos=['NOUN', 'VERB','ADJ','PROPN'],
+                         trigram_cand_pos=['NOUN', 'VERB', 'ADJ', 'PROPN'])
             for kw, row in tr4w.get_weights().items():
                 kw_weights[lang][kw] = row
             keywords = kw_weights[lang].keys()
             if len(keywords):
                 rows = kw_weights[lang].values()
                 df = pd.DataFrame(rows, index=keywords, columns=['weight']).sort_values(by='weight', ascending=False)
-                df.to_csv(os.path.join(output_dir_path, f"{period}-{lang}.csv"))
+                df.to_csv(os.path.join(output_dir_path, f"{period}-{lang}.csv"), encoding="utf-8")
 
 # create a grid of keywords, periods, and weights
 all_kw_weights = {"de":{}, "en": {}}
@@ -124,17 +128,18 @@ for lang in ["en", "de"]:
         if not os.path.isfile(file_path):
             #print(f"Skipping non-existent data for {period}..")
             continue
-        with open(file_path) as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
             ignore_list = replace_terms.keys()
+            next(reader)
             for row in reader:
                 kw, weight = row
                 if kw in ignore_list:
                     continue
                 if kw in all_kw_weights[lang].keys():
-                    all_kw_weights[lang][kw][period] = weight
+                    all_kw_weights[lang][kw][period] = float(weight)
                 else:
-                    all_kw_weights[lang][kw] = {period: weight}
+                    all_kw_weights[lang][kw] = {period: float(weight)}
 
     # create dataframe keywords x periods, containing the weights and save to filesystem
     keywords = all_kw_weights[lang].keys()
@@ -144,4 +149,3 @@ for lang in ["en", "de"]:
         pickle_path = os.path.join(corpus_dir_dirname, corpus_dir_basename + f"-{lang}.pkl")
         df.to_pickle(pickle_path)
         print(f"Dataframe containing the weights per keyword and period has been saved to {pickle_path}")
-        print(df)
