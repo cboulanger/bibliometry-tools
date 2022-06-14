@@ -40,12 +40,8 @@ years_files = {}
 
 print("Looking up publication years from DOI...")
 for file_name in corpus_files:
-    doi = file_name.replace("_", "/", 1).strip(".txt") \
-        .strip(".pdf") \
-        .strip(".pdftotext") \
-        .strip(".docx")\
-        .strip(".txtUnstructured")
-    print(doi)
+    doi = file_name.replace("_", "/", 1).strip(".txt")
+    #print(doi)
     try:
         pubyear = md.loc[md['DOI'] == doi]['PubYear']
         pubyear = int(pubyear)
@@ -83,6 +79,8 @@ for year in range(year_min, year_max):
         period_list.append(period)
         # determine path of outputfile and skip computation if file exists
         output_file_path = os.path.join(output_dir_path, f"{period}.json")
+    if year not in years_files.keys():
+        continue
     for file_name in years_files[year]:
         file_path = os.path.join(corpus_dir, file_name)
         words.extend(get_words_from_file(file_path, replace_terms=replace_terms))
@@ -94,6 +92,7 @@ for year in range(year_min, year_max):
         if os.path.isfile(output_file_path):
             print(f"- {period} ({num_docs} {infl.plural('document', num_docs)}) already processed...")
             continue
+        break
         # process period
         print(f"- Processing {period} ({num_docs} {infl.plural('document', num_docs)})...")
         text = ' '.join(words)
@@ -121,9 +120,10 @@ for period in period_list:
             else:
                 all_kw_weights[kw] = {period: weight}
 
-# create dataframe keywords x periods, containing the weights
+# create dataframe keywords x periods, containing the weights and save to filesystem
 rows = all_kw_weights.values()
 keywords = all_kw_weights.keys()
 df = pd.DataFrame(rows, index=keywords)
-
-print(df.head(100))
+pickle_path = os.path.join(corpus_dir_dirname, corpus_dir_basename + ".pkl")
+df.to_pickle(pickle_path)
+print(f"Dataframe containing the weights per keyword and period has been saved to {pickle_path}")
