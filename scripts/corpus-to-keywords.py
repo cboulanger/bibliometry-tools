@@ -2,8 +2,6 @@ import os, sys
 import json, csv
 import re
 
-import pandas
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from src.domain_terminology_extraction import TextRank4Keyword, get_words_from_file, get_replace_dict_from_file
 import pandas as pd
@@ -22,13 +20,20 @@ if replace_terms_file_path and not os.path.isfile(replace_terms_file_path):
 replace_terms = get_replace_dict_from_file(replace_terms_file_path) if replace_terms_file_path else None
 
 # metadata
-md = pd.read_csv("data\jls.csv")
+corpus_dir_basename = os.path.basename(corpus_dir)
+corpus_dir_dirname = os.path.dirname(corpus_dir)
+corpus_dir_prefix = corpus_dir_basename[:corpus_dir_basename.find("-")]
+doi_metadata_file = os.path.join(corpus_dir_dirname, corpus_dir_prefix + ".csv")
+if not os.path.isfile(doi_metadata_file):
+    raise FileNotFoundError(f"Metadata file {doi_metadata_file} does not exist")
+md = pd.read_csv(doi_metadata_file)
+
 
 # Partition the corpus
 corpus_files = os.listdir(corpus_dir)
 corpus_files.sort()
 years_files = {}
-print(f"Processing {len(corpus_files)} documents...")
+
 
 for file_name in corpus_files:
     doi = file_name.strip(".txt").replace("_", "/", 1)
@@ -50,9 +55,11 @@ years.sort()
 year_min, year_max = min(years), max(years)
 
 # output dir
-output_dir_name = os.path.basename(corpus_dir) + f"_{year_min}-{year_max}_" + (str(period_size).zfill(2))
-output_dir_path = os.path.join(os.path.dirname(corpus_dir), output_dir_name)
+output_dir_name = f"{corpus_dir_basename}_{year_min}-{year_max}_" + (str(period_size).zfill(2))
+output_dir_path = os.path.join(corpus_dir_dirname, output_dir_name)
 os.makedirs(output_dir_path, exist_ok=True)
+
+print(f"Processing {len(corpus_files)} documents into {output_dir_name} ...")
 
 period_start = None
 period_list = []
