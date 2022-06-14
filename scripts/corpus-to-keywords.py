@@ -80,6 +80,7 @@ for year in range(year_min, year_max):
         # determine path of outputfile and skip computation if file exists
         output_file_path = os.path.join(output_dir_path, f"{period}.json")
     if year not in years_files.keys():
+        print(f"- No data for {year}")
         continue
     for file_name in years_files[year]:
         file_path = os.path.join(corpus_dir, file_name)
