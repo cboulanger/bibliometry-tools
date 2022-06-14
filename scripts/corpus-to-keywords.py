@@ -1,10 +1,10 @@
 import os, sys
-import json, csv
-import re
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from src.domain_terminology_extraction import TextRank4Keyword, get_words_from_file, get_replace_dict_from_file
 import pandas as pd
+import json, csv
+import re
+import inflect
 
 # Command line arguments
 corpus_dir = sys.argv[1]
@@ -18,6 +18,7 @@ if replace_terms_file_path and not os.path.isfile(replace_terms_file_path):
 
 # replace terms
 replace_terms = get_replace_dict_from_file(replace_terms_file_path) if replace_terms_file_path else None
+infl = inflect.engine()
 
 # metadata
 corpus_dir_basename = os.path.basename(corpus_dir)
@@ -82,10 +83,10 @@ for year in range(year_min, year_max):
         period_start = None
         # skip already processed periods
         if os.path.isfile(output_file_path):
-            print(f"- {period} ({num_docs} document{'s' if num_docs != 1 else ''}) already processed...")
+            print(f"- {period} ({num_docs} {infl.plural('document', num_docs)}) already processed...")
             continue
         # process period
-        print(f"- Processing {period} ({num_docs} document(s))...")
+        print(f"- Processing {period} ({num_docs} {infl.plural('document', num_docs)})...")
         text = ' '.join(words)
         tr4w = TextRank4Keyword()
         tr4w.analyze(text)

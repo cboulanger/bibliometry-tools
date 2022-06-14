@@ -12,3 +12,4 @@ spacy
 nltk
 regex
 pandas
+inflect
