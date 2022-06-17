@@ -6,6 +6,7 @@ import pandas as pd
 import json, csv, regex as re
 import inflect
 from langdetect import detect
+import psutil
 
 infl = inflect.engine()
 
@@ -94,7 +95,8 @@ for year in range(year_min, year_max):
         # process period
         print(f"- Processing {period} ({num_files} {infl.plural('document', num_files)})...")
         kw_weights = {"de":{}, "en": {}}
-        docs = {"de":[], "en": []}
+        all_docs = {"de":[], "en": []}
+        # split files into language-specific batches
         for file_path in files:
             file_name = os.path.basename(file_path)
             words = get_words_from_file(file_path, replace_terms=replace_terms)
@@ -104,26 +106,40 @@ for year in range(year_min, year_max):
                 # we can only deal with german and english
                 print(f"Detected unsupported language {lang} - skipping {file_name}...")
                 continue
-            docs[lang].append(doc)
+            all_docs[lang].append(doc)
         # handle languages separately, splitting up into smaller chunks if corpus becomes to big
         for lang in ["de", "en"]:
             tr4w = TextRank4Keyword(lang)
-            docs = docs[lang]
-            corpus = ' '.join(docs)
-            corpus_length = len(corpus)
-            print(f"- Analyzing corpus with language code '{lang}' ({corpus_length} chars)")
-            tr4w.analyze(corpus,
-                         lower=True,
-                         unigram_cand_pos=['NOUN'],
-                         bigram_cand_pos=['NOUN', 'VERB', 'ADJ','PROPN'],
-                         trigram_cand_pos=['NOUN', 'VERB', 'ADJ', 'PROPN'])
-            for kw, row in tr4w.get_weights().items():
-                kw_weights[lang][kw] = row
+            docs = all_docs[lang]
+            num_docs = len(docs)
+            counter = 0
+            cutoff = psutil.virtual_memory().free/40000 # just a guess
+            while len(docs) > 0:
+                corpus = ""
+                batch_size = 0
+                while len(docs) > 0 and len(corpus) < cutoff:
+                    corpus += docs.pop(0)
+                    batch_size += 1
+                    counter += 1
+                print(f"- Analyzing {batch_size} documents ({counter}/{num_docs}) with language code '{lang}' ({len(corpus)} chars)")
+                tr4w.analyze(corpus,
+                             lower=True,
+                             unigram_cand_pos=['NOUN','PROPN'],
+                             bigram_cand_pos=['NOUN', 'VERB', 'ADJ','PROPN'],
+                             trigram_cand_pos=['NOUN', 'VERB', 'ADJ', 'PROPN'])
+                for kw, weight in tr4w.get_weights().items():
+                    if kw in kw_weights[lang].keys():
+                        kw_weights[lang][kw].append(weight)
+                    kw_weights[lang][kw] = [weight]
+                del tr4w
+
             keywords = kw_weights[lang].keys()
             if len(keywords):
-                rows = kw_weights[lang].values()
+                # average weight values of batches
+                rows = [sum(row)/len(row) for row in kw_weights[lang].values()]
                 df = pd.DataFrame(rows, index=keywords, columns=['weight']).sort_values(by='weight', ascending=False)
                 df.to_csv(os.path.join(output_dir_path, f"{period}-{lang}.csv"), encoding="utf-8")
+
 
 # create a grid of keywords, periods, and weights
 all_kw_weights = {"de":{}, "en": {}}

@@ -15,3 +15,4 @@ pandas
 inflect
 matplotlib
 langdetect
+psutil
