@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, gc
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from src.domain_terminology_extraction import TextRank4Keyword, get_words_from_file, get_replace_dict_from_file
@@ -109,7 +109,6 @@ for year in range(year_min, year_max):
             all_docs[lang].append(doc)
         # handle languages separately, splitting up into smaller chunks if corpus becomes to big
         for lang in ["de", "en"]:
-            tr4w = TextRank4Keyword(lang)
             docs = all_docs[lang]
             num_docs = len(docs)
             counter = 0
@@ -122,6 +121,7 @@ for year in range(year_min, year_max):
                     batch_size += 1
                     counter += 1
                 print(f"- Analyzing {batch_size} documents ({counter}/{num_docs}) with language code '{lang}' ({len(corpus)} chars)")
+                tr4w = TextRank4Keyword(lang)
                 tr4w.analyze(corpus,
                              lower=True,
                              unigram_cand_pos=['NOUN','PROPN'],
@@ -131,7 +131,9 @@ for year in range(year_min, year_max):
                     if kw in kw_weights[lang].keys():
                         kw_weights[lang][kw].append(weight)
                     kw_weights[lang][kw] = [weight]
+                # free up memory
                 del tr4w
+                gc.collect()
 
             keywords = kw_weights[lang].keys()
             if len(keywords):
