@@ -268,6 +268,7 @@ def get_replace_dict_from_file(replace_terms_file_path):
         reader = csv.reader(f)
         for row in reader:
             if row is list and row[0]:
+                if row[0].startswith("#"): continue # allow comment lines
                 replace_terms_dict[row[0]] = row[1] if len(row) > 1 else ""
     return replace_terms_dict
 

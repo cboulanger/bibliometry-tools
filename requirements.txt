@@ -13,3 +13,5 @@ nltk
 regex
 pandas
 inflect
+matplotlib
+langdetect
