@@ -105,13 +105,18 @@ for year in range(year_min, year_max):
                 print(f"Detected unsupported language {lang} - skipping {file_name}...")
                 continue
             docs[lang].append(doc)
+        # handle languages separately, splitting up into smaller chunks if corpus becomes to big
         for lang in ["de", "en"]:
             tr4w = TextRank4Keyword(lang)
-            tr4w.analyze(' '.join(docs[lang]),
+            docs = docs[lang]
+            corpus = ' '.join(docs)
+            corpus_length = len(corpus)
+            print(f"- Analyzing corpus with language code '{lang}' ({corpus_length} chars)")
+            tr4w.analyze(corpus,
                          lower=True,
                          unigram_cand_pos=['NOUN'],
-                         bigram_cand_pos=['NOUN', 'VERB','PROPN'],
-                         trigram_cand_pos=['NOUN', 'VERB', 'PROPN'])
+                         bigram_cand_pos=['NOUN', 'VERB', 'ADJ','PROPN'],
+                         trigram_cand_pos=['NOUN', 'VERB', 'ADJ', 'PROPN'])
             for kw, row in tr4w.get_weights().items():
                 kw_weights[lang][kw] = row
             keywords = kw_weights[lang].keys()
