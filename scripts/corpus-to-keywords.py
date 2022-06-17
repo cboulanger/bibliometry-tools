@@ -110,8 +110,8 @@ for year in range(year_min, year_max):
             tr4w.analyze(' '.join(docs[lang]),
                          lower=True,
                          unigram_cand_pos=['NOUN'],
-                         bigram_cand_pos=['NOUN', 'VERB','ADJ','PROPN'],
-                         trigram_cand_pos=['NOUN', 'VERB', 'ADJ', 'PROPN'])
+                         bigram_cand_pos=['NOUN', 'VERB','PROPN'],
+                         trigram_cand_pos=['NOUN', 'VERB', 'PROPN'])
             for kw, row in tr4w.get_weights().items():
                 kw_weights[lang][kw] = row
             keywords = kw_weights[lang].keys()
