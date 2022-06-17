@@ -79,10 +79,10 @@ for year in range(year_min, year_max):
         period_list.append(period)
     if year not in years_files.keys():
         print(f"- No data for {year}")
-        continue
-    for file_name in years_files[year]:
-        file_path = os.path.join(corpus_dir, file_name)
-        files.append(file_path)
+    else:
+        for file_name in years_files[year]:
+            file_path = os.path.join(corpus_dir, file_name)
+            files.append(file_path)
     if year == period_end or year == year_max:
         # start a new period
         period_start = None
