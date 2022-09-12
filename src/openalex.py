@@ -5,6 +5,7 @@ import json
 from typing import Union
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+import sys
 
 
 class OpenAlexWork(Work):
@@ -271,42 +272,50 @@ class OpenAlexToNeo4J:
         self.log(f"Imported Institution {inst_data['display_name']}")
         return inst_node_id
 
-    def import_work(self, work_data, retrieve_full_data=False, import_cited_works=True) -> int:
-        if retrieve_full_data:
-            try:
-                work_data = self.get_full_entity_data(work_data['id'])
-            except ApiError as err:
-                print(f"Could not access full data for Work '{work_data}': {err}")
-        if 'biblio' in work_data:
-            for key, value in work_data['biblio'].items():
-                work_data[key] = value
-        work_node_id = self.create_node("Work", work_data)
-        if 'host_venue' in work_data \
-                and type(work_data['host_venue']) is dict \
-                and self.count_non_empty_properties(work_data['host_venue']) >= 1:
-            venue_id = work_data['host_venue']['id']
-            venue_node_id = self.get_entity_node_id(venue_id) if venue_id else None
-            try:
-                if not venue_node_id:
-                    venue_node_id = self.import_venue(work_data['host_venue'], retrieve_full_data=bool(venue_id))
-                self.create_relationship(
-                    "Work", work_node_id,
-                    "Venue", venue_node_id,
-                    "PUBLISHED_IN")
-            except ApiError as err:
-                print(f"Could not import Work '{work_data['title']}': {err}")
-        for authorship in work_data['authorships']:
-            author_id = authorship['author']['id']
-            author_node_id = self.get_entity_node_id(author_id)
-            try:
-                if not author_node_id:
-                    author_node_id = self.import_author(authorship['author'], retrieve_full_data=True)
-                self.create_relationship(
-                    "Author", author_node_id,
-                    "Work", work_node_id,
-                    "CREATOR_OF")
-            except ApiError as err:
-                print(f"Could not import Author {authorship['author']['display_name']}:{err}")
+    def import_work(self, work_data, retrieve_full_data=False, import_cited_works=True, skip_if_id_exists=True) -> int:
+        id = work_data['id']
+        work_node_id = self.get_entity_node_id(id)
+        # import node data
+        if skip_if_id_exists and work_node_id is not None:
+            print(f"Work with id {id} has already been imported.")
+        else:
+            if retrieve_full_data:
+                try:
+                    work_data = self.get_full_entity_data(work_data['id'])
+                except ApiError as err:
+                    print(f"Could not access full data for Work '{work_data}': {err}")
+            if 'biblio' in work_data:
+                for key, value in work_data['biblio'].items():
+                    work_data[key] = value
+            work_node_id = self.create_node("Work", work_data)
+            if 'host_venue' in work_data \
+                    and type(work_data['host_venue']) is dict \
+                    and self.count_non_empty_properties(work_data['host_venue']) >= 1:
+                venue_id = work_data['host_venue']['id']
+                venue_node_id = self.get_entity_node_id(venue_id) if venue_id else None
+                try:
+                    if not venue_node_id:
+                        venue_node_id = self.import_venue(work_data['host_venue'], retrieve_full_data=bool(venue_id))
+                    self.create_relationship(
+                        "Work", work_node_id,
+                        "Venue", venue_node_id,
+                        "PUBLISHED_IN")
+                except ApiError as err:
+                    print(f"Could not import Work '{str(work_data['title'])}': {err}")
+            for authorship in work_data['authorships']:
+                author_id = authorship['author']['id']
+                author_node_id = self.get_entity_node_id(author_id)
+                try:
+                    if not author_node_id:
+                        author_node_id = self.import_author(authorship['author'], retrieve_full_data=True)
+                    self.create_relationship(
+                        "Author", author_node_id,
+                        "Work", work_node_id,
+                        "CREATOR_OF")
+                except ApiError as err:
+                    print(f"Could not import Author {authorship['author']['display_name']}:{err}")
+            self.log(f"Imported Work {work_data['title']}")
+        # import cited references
         if import_cited_works and 'referenced_works' in work_data:
             cited_works_oa_ids = work_data['referenced_works']
             num_cited_works = len(cited_works_oa_ids)
@@ -322,5 +331,4 @@ class OpenAlexToNeo4J:
                         "CITES")
                 except ApiError as err:
                     print(f"Could not import Cited Work '{cited_work_oa_id}':{err}")
-        self.log(f"Imported Work {work_data['title']}")
         return work_node_id
